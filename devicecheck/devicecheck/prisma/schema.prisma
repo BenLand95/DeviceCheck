@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum RunType {
+  MANUAL
+  SCHEDULED
+}
+
+enum ReportStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum ScheduleFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum DeviceSystem {
+  SIGNAGEOS
+  REFLECTVIEW
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(USER)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Customer {
+  id                      String   @id @default(cuid())
+  name                    String
+  reportEnabled           Boolean  @default(true) @map("report_enabled")
+  reportTimezone          String   @default("America/New_York") @map("report_timezone")
+  offlineThresholdSeconds Int      @default(180) @map("offline_threshold_seconds")
+  ticketThresholdSeconds  Int      @default(86400) @map("ticket_threshold_seconds")
+  happyfoxContactId       Int?     @map("happyfox_contact_id")
+  reportOfflineOnly       Boolean  @default(false) @map("report_offline_only")
+  reflectviewUrl          String?  @map("reflectview_url")
+  xytePduEnabled          Boolean  @default(false) @map("xyte_pdu_enabled")
+  pduRebootThreshold      Int      @default(10) @map("pdu_reboot_threshold")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  devices    Device[]
+  recipients CustomerRecipient[]
+  reports    Report[]
+  schedules  ReportSchedule[]
+
+  @@map("customers")
+}
+
+model Device {
+  id                 String   @id @default(cuid())
+  customerId         String   @map("customer_id")
+  name               String
+  signageosDeviceUid String   @map("signageos_device_uid")
+  networkName        String?  @map("network_name")
+  system             DeviceSystem @default(SIGNAGEOS)
+  ignored            Boolean  @default(false)
+  pduDeviceId        String?  @map("pdu_device_id")
+  pduPort            Int?     @map("pdu_port")
+  lastStatus         String?  @map("last_status")
+  lastAliveAt        DateTime? @map("last_alive_at")
+  lastCheckedAt      DateTime? @map("last_checked_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tickets  DeviceTicket[]
+
+  @@index([signageosDeviceUid])
+  @@index([customerId])
+  @@map("devices")
+}
+
+model CustomerRecipient {
+  id         String   @id @default(cuid())
+  customerId String   @map("customer_id")
+  email      String
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_recipients")
+}
+
+model Report {
+  id           String          @id @default(cuid())
+  customerId   String          @map("customer_id")
+  scheduleId   String?         @map("schedule_id")
+  runType      RunType         @map("run_type")
+  status       ReportStatus    @default(QUEUED)
+  filePath     String?         @map("file_path")
+  deviceCount  Int             @default(0) @map("device_count")
+  onlineCount  Int             @default(0) @map("online_count")
+  offlineCount Int             @default(0) @map("offline_count")
+  unknownCount Int             @default(0) @map("unknown_count")
+  errorMessage String?         @map("error_message")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  completedAt  DateTime?       @map("completed_at")
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  schedule ReportSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([scheduleId])
+  @@map("reports")
+}
+
+model ReportSchedule {
+  id         String            @id @default(cuid())
+  customerId String            @map("customer_id")
+  frequency  ScheduleFrequency
+  time       String            // HH:MM in customer timezone
+  dayOfWeek  Int?              @map("day_of_week")  // 0=Sun..6=Sat, for WEEKLY
+  dayOfMonth Int?              @map("day_of_month") // 1-28, for MONTHLY
+  enabled    Boolean           @default(true)
+  sendEmail  Boolean           @default(true) @map("send_email")
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reports  Report[]
+
+  @@index([customerId])
+  @@map("report_schedules")
+}
+
+model DeviceTicket {
+  id              String   @id @default(cuid())
+  deviceId        String   @map("device_id")
+  ticketId        Int      @map("ticket_id")       // HappyFox ticket number
+  ticketDisplayId String   @map("ticket_display_id") // e.g. #HFS00000001
+  status          String   @default("open")         // open, closed
+  occurrenceNum   Int      @default(1) @map("occurrence_num")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([ticketId])
+  @@map("device_tickets")
+}
+
+model AppSettings {
+  key   String @id
+  value String
+
+  @@map("app_settings")
+}

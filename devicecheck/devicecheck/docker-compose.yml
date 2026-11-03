@@ -1,0 +1,107 @@
+
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: devicecheck
+      POSTGRES_PASSWORD: devicecheck
+      POSTGRES_DB: devicecheck
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U devicecheck']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - '80:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - web
+
+  web:
+    image: 10.31.20.17:5000/devicecheck-web:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    expose:
+      - '3000'
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://devicecheck:devicecheck@postgres:5432/devicecheck
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - reports:/app/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: 10.31.20.17:5000/devicecheck-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://devicecheck:devicecheck@postgres:5432/devicecheck
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - reports:/app/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: devicecheck
+      PGPASSWORD: devicecheck
+      PGDATABASE: devicecheck
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "while true; do
+        echo \"Running backup at $$(date)...\";
+        pg_dump -Fc > /backups/devicecheck_$$(date +%Y%m%d_%H%M%S).dump;
+        ls -t /backups/*.dump | tail -n +31 | xargs -r rm;
+        echo \"Backup complete. Sleeping 24h...\";
+        sleep 86400;
+      done"
+
+volumes:
+  pgdata:
+    name: devicecheck_pgdata
+  redisdata:
+    name: devicecheck_redisdata
+  reports:
+    name: devicecheck_reports
+  backups:
+    name: devicecheck_backups
+  caddy_data:
+    name: devicecheck_caddy_data
